@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 using UnityEditor;
 using UnityEngine;
 
@@ -49,7 +50,7 @@ namespace Pumkin.MochieTools
             }
         }
         
-        Version version = new Version(1, 0);
+        Version version = new Version(1, 0, 1);
         string _subTitle;
         
         List<GameObject> _meshObjects = new List<GameObject>(DefaultListSize);
@@ -121,68 +122,98 @@ namespace Pumkin.MochieTools
                 lodGroupMaterial = EditorGUILayout.ObjectField("LOD Group Material", lodGroupMaterial, typeof(Material), true) as Material;
             }
             EditorGUILayout.EndVertical();
-            
-            
-            
+
             EditorGUILayout.BeginVertical(MochieData.Styles.RoundedBox);
             {
                 EditorGUI.BeginDisabledGroup(!CanGenerate);
+                
                 if(GUILayout.Button("Generate", MochieData.Styles.BigButton))
-                {
-                    List<LOD> lods = new List<LOD>();
-                    Transform parent = null;
-                    LODGroup group = null;
-
-                    for(var i = 0; i < MeshObjects.Count; i++)
-                    {
-                        GameObject mesh = MeshObjects[i];
-                        float value = i < MeshObjects.Count - 1 ? MeshValues[i] : cullingRange;
-                        
-                        GameObject obj = Instantiate(mesh, parent, true);
-                        obj.name = mesh.name;
-
-                        Renderer[] renders = obj.GetComponentsInChildren<Renderer>(true);
-
-                        foreach(var ren in renders)
-                            ren.sharedMaterial = lodGroupMaterial;
-
-                        lods.Add(new LOD(value / 100, renders));
-
-                        if(!group)
-                            group = obj.AddComponent<LODGroup>();
-                        if(!parent)
-                            parent = obj.transform;
-                    }
-
-                    if(group)
-                    {
-                        group.SetLODs(lods.ToArray());
-
-                        string path = AssetDatabase.GetAssetPath(MeshObjects[0]);
-                        if(!string.IsNullOrWhiteSpace(path))
-                        {
-                            string prefix = string.IsNullOrWhiteSpace(namePrefix) ? "" : $"{namePrefix}_";
-                            string prefabName = $"{prefix}{_meshObjects[0].name}.prefab";
-                            path = path.Substring(0, path.LastIndexOf('/') + 1) + prefabName;
-                            
-                            PrefabUtility.SaveAsPrefabAsset(group.gameObject, path);
-                            MochieHelpers.PingAssetAtPath(path);
-                            
-                            Debug.Log("Generated prefab at " + path);
-                        }
-                    }
-                    else
-                    {
-                        Debug.LogError("LOD group generation failed.");
-                    }
-                    if(parent)
-                        DestroyImmediate(parent.gameObject);
-                }
+                    GenerateLodGroups();
+                
                 EditorGUI.EndDisabledGroup();
             }
             EditorGUILayout.EndVertical();
         }
 
-        bool CanGenerate => MeshObjects != null && MeshObjects.Count > 0 && MeshObjects[0];
+        bool CanGenerate => lodGroupMaterial && MeshObjects != null && MeshObjects.Count > 0 && MeshObjects[0];
+        
+        void GenerateLodGroups()
+        {
+            List<LOD> lods = new List<LOD>();
+            Transform parent = null;
+            LODGroup lodGroup = null;
+
+            for(var i = 0; i < MeshObjects.Count; i++)
+            {
+                GameObject mesh = MeshObjects[i];
+                float value = i < MeshObjects.Count - 1 ? MeshValues[i] : cullingRange;
+
+                if(mesh is null)
+                {
+                    Debug.LogWarning("Skipped null LOD object at index " + i);
+                    continue;
+                }
+
+                GameObject obj = Instantiate(mesh, parent, true);
+                obj.name = mesh.name;
+
+                Renderer[] renders = obj.GetComponentsInChildren<Renderer>(true);
+
+                foreach(var ren in renders)
+                    ren.sharedMaterial = lodGroupMaterial;
+
+                lods.Add(new LOD(value / 100, renders));
+
+                if(!lodGroup)
+                    lodGroup = obj.AddComponent<LODGroup>();
+                if(!parent)
+                    parent = obj.transform;
+            }
+
+            if(lodGroup)
+            {
+                // Check if all the value fields are 0 and assign our own values
+                bool valuesAreEmpty = lods
+                                      .Take(lods.Count - 1)
+                                      .All(l => l.screenRelativeTransitionHeight == 0);
+                
+                if(valuesAreEmpty)
+                {
+                    float valueStep = (100 - cullingRange) / lods.Count / 100;
+                    for(int i = 0; i < lods.Count; i++)
+                    {
+                        float newValue = i < lods.Count - 1 
+                            ? 1 - valueStep * (i + 1) 
+                            : cullingRange / 100;
+                        
+                        LOD newLod = new LOD(newValue, lods[i].renderers);
+                        lods[i] = newLod;
+                    }
+                }
+
+                lodGroup.SetLODs(lods.ToArray());
+
+                // Save prefab to Assets
+                string path = AssetDatabase.GetAssetPath(MeshObjects[0]);
+                if(!string.IsNullOrWhiteSpace(path))
+                {
+                    string prefix = string.IsNullOrWhiteSpace(namePrefix) ? "" : $"{namePrefix}_";
+                    string prefabName = $"{prefix}{_meshObjects[0].name}.prefab";
+                    path = path.Substring(0, path.LastIndexOf('/') + 1) + prefabName;
+
+                    PrefabUtility.SaveAsPrefabAsset(lodGroup.gameObject, path);
+                    MochieHelpers.PingAssetAtPath(path);
+
+                    Debug.Log($"Generated LOD Group prefab at '{path}'");
+                }
+            }
+            else
+            {
+                Debug.LogError("LOD group generation failed.");
+            }
+
+            if(parent)
+                DestroyImmediate(parent.gameObject);
+        }
     }
 }
