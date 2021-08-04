@@ -9,16 +9,58 @@ namespace Pumkin.MochieTools
     public class LODGroupGenerator : EditorWindow
     {
         const string listLabel = "LODs";
-        const float minHeight = 50;
-        const float maxHeight = 100;
+        const float minListHeight = 50;
+        const float maxListHeight = 100;
+
+        const int DefaultListSize = 4;
+
+        string SubTitle
+        {
+            get
+            {
+                if(string.IsNullOrWhiteSpace(_subTitle))
+                    _subTitle = "by Pumkin - v" + version.ToString();
+                return _subTitle;
+            }
+        }
         
-        List<MochieData.LODMesh> meshes = new List<MochieData.LODMesh>();
+        List<GameObject> MeshObjects
+        {
+            get
+            {
+                if(_meshObjects == null)
+                    _meshObjects.ResizeWithDefaults(DefaultListSize);
+                return _meshObjects;
+            }
+            set => _meshObjects = value;
+        }
         
+        List<float> MeshValues
+        {
+            get
+            {
+                if(_meshValues == null)
+                    _meshValues.ResizeWithDefaults(DefaultListSize);
+                
+                int meshCount = _meshObjects?.Count ?? 0;
+                if(_meshValues.Count != meshCount)
+                    _meshValues.ResizeWithDefaults(meshCount - 1);
+                return _meshValues;
+            }
+        }
+        
+        Version version = new Version(1, 0);
+        string _subTitle;
+        
+        List<GameObject> _meshObjects = new List<GameObject>(DefaultListSize);
+        List<float> _meshValues = new List<float>(DefaultListSize);
+
+        [SerializeField] string namePrefix;
         [SerializeField] Material lodGroupMaterial;
+        [SerializeField] float cullingRange = 5;
         
-        [SerializeField] bool expanded = false;
         [SerializeField] Vector2 scroll;
-        
+
         GUIContent listLabelContent = new GUIContent(listLabel);
             
         [MenuItem("Tools/Mochie/LOD Group Generator")]
@@ -31,30 +73,51 @@ namespace Pumkin.MochieTools
 
         void OnGUI()
         {
+            EditorGUILayout.LabelField("LOD Group Generator", MochieData.Styles.TitleLabel);
+            EditorGUILayout.LabelField(SubTitle);
+
+            MochieHelpers.DrawLine();
+            
             EditorGUILayout.BeginVertical(MochieData.Styles.RoundedBox);
             {
                 EditorGUILayout.BeginHorizontal();
                 {
                     EditorGUILayout.LabelField(listLabelContent);
-                    expanded = GUILayout.Toggle(expanded, MochieData.Icons.Options, MochieData.Styles.Icon);
                 }
                 EditorGUILayout.EndHorizontal();
 
-                string lodCount = (meshes?.Count ?? 0).ToString();
+                string lodCount = (MeshObjects?.Count ?? 0).ToString();
                 listLabelContent.text = $"{listLabel} ({lodCount})";
-                
-                if(expanded)
-                {
-                    MochieHelpers.DrawLine();
-                    MochieHelpers.DrawLODListWithAddButtonsScrolling(meshes, ref scroll, true, minHeight, maxHeight);
-                    EditorGUILayout.Space();
-                }
+
+                MochieHelpers.DrawLine();
+                MochieHelpers.DrawLODListWithAddButtonsScrolling(MeshObjects, MeshValues, ref scroll, true, minListHeight, maxListHeight);
                 EditorGUILayout.Space();
+                
+                EditorGUI.BeginChangeCheck();
+                float newCullingRange = EditorGUILayout.FloatField("Culling Range", cullingRange);
+                if(EditorGUI.EndChangeCheck())
+                    cullingRange = Mathf.Clamp(newCullingRange, 0, newCullingRange);
+                
+                EditorGUILayout.Space();
+                
+                if(GUILayout.Button("From Selection", MochieData.Styles.MediumButton))
+                {
+                    var newObjects = MochieHelpers.GetLODsFromSelection(out Material lodMaterial);
+                    if(newObjects != null)
+                        MeshObjects = newObjects; 
+                    if(lodMaterial)
+                        lodGroupMaterial = lodMaterial;
+                }
+                GUILayout.Space(4);
             }
             EditorGUILayout.EndVertical();
             
             EditorGUILayout.BeginVertical(MochieData.Styles.RoundedBox);
             {
+                namePrefix = EditorGUILayout.TextField("Name Prefix", namePrefix);
+                
+                EditorGUILayout.Space();
+                
                 lodGroupMaterial = EditorGUILayout.ObjectField("LOD Group Material", lodGroupMaterial, typeof(Material), true) as Material;
             }
             EditorGUILayout.EndVertical();
@@ -64,22 +127,26 @@ namespace Pumkin.MochieTools
             EditorGUILayout.BeginVertical(MochieData.Styles.RoundedBox);
             {
                 EditorGUI.BeginDisabledGroup(!CanGenerate);
-                if(GUILayout.Button("Generate"))
+                if(GUILayout.Button("Generate", MochieData.Styles.BigButton))
                 {
                     List<LOD> lods = new List<LOD>();
                     Transform parent = null;
                     LODGroup group = null;
-                    foreach(var lm in meshes)
-                    {
-                        GameObject obj = Instantiate(lm.MeshObject, parent, true);
-                        obj.name = lm.MeshObject.name;
-                        
-                        Renderer[] renders = obj.GetComponentsInChildren<Renderer>(true);
-                        
-                        for(int i = 0; i < renders.Length; i++)
-                            renders[i].sharedMaterial = lodGroupMaterial;
 
-                        lods.Add(new LOD(lm.Percent/100, renders));
+                    for(var i = 0; i < MeshObjects.Count; i++)
+                    {
+                        GameObject mesh = MeshObjects[i];
+                        float value = i < MeshObjects.Count - 1 ? MeshValues[i] : cullingRange;
+                        
+                        GameObject obj = Instantiate(mesh, parent, true);
+                        obj.name = mesh.name;
+
+                        Renderer[] renders = obj.GetComponentsInChildren<Renderer>(true);
+
+                        foreach(var ren in renders)
+                            ren.sharedMaterial = lodGroupMaterial;
+
+                        lods.Add(new LOD(value / 100, renders));
 
                         if(!group)
                             group = obj.AddComponent<LODGroup>();
@@ -91,10 +158,12 @@ namespace Pumkin.MochieTools
                     {
                         group.SetLODs(lods.ToArray());
 
-                        string path = AssetDatabase.GetAssetPath(meshes[0].MeshObject);
+                        string path = AssetDatabase.GetAssetPath(MeshObjects[0]);
                         if(!string.IsNullOrWhiteSpace(path))
                         {
-                            path = path.Substring(0, path.LastIndexOf('/') + 1) + meshes[0].MeshObject.name + ".prefab";
+                            string prefix = string.IsNullOrWhiteSpace(namePrefix) ? "" : $"{namePrefix}_";
+                            string prefabName = $"{prefix}{_meshObjects[0].name}.prefab";
+                            path = path.Substring(0, path.LastIndexOf('/') + 1) + prefabName;
                             
                             PrefabUtility.SaveAsPrefabAsset(group.gameObject, path);
                             MochieHelpers.PingAssetAtPath(path);
@@ -114,35 +183,6 @@ namespace Pumkin.MochieTools
             EditorGUILayout.EndVertical();
         }
 
-        bool CanGenerate => meshes != null && meshes.Count > 0 && meshes[0]?.MeshObject;
+        bool CanGenerate => MeshObjects != null && MeshObjects.Count > 0 && MeshObjects[0];
     }
-
-    // [CustomPropertyDrawer(typeof(MochieData.LODMesh))]
-    // public class LODMeshPropertyDrawer : PropertyDrawer
-    // {
-    //     static string meshName = nameof(MochieData.LODMesh.Mesh);
-    //     static string valueName = nameof(MochieData.LODMesh.Percent);
-    //     
-    //     public override void OnGUI(Rect position, SerializedProperty property, GUIContent label)
-    //     {
-    //         SerializedProperty mesh = property.FindPropertyRelative(meshName);
-    //         SerializedProperty value = property.FindPropertyRelative(valueName);
-    //         
-    //         EditorGUI.PrefixLabel(position, label);
-    //         EditorGUI.BeginProperty(position, label, property);
-    //         {
-    //             EditorGUILayout.BeginHorizontal();
-    //             {
-    //                 EditorGUI.ObjectField(position, mesh);
-    //                 EditorGUI.BeginChangeCheck();
-    //                 float newFloat = EditorGUI.FloatField(position, value.floatValue);
-    //                 if(EditorGUI.EndChangeCheck())
-    //                     value.floatValue = newFloat;
-    //             }
-    //             EditorGUILayout.EndHorizontal();
-    //         }
-    //         EditorGUI.EndProperty();
-    //         
-    //     }
-    // }
 }

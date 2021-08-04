@@ -1,5 +1,8 @@
 ﻿using System;
+using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
+using System.Text.RegularExpressions;
 using UnityEditor;
 using UnityEngine;
 
@@ -18,7 +21,7 @@ namespace Pumkin.MochieTools
                 EditorGUILayout.Space();
         }
         
-        public static bool DrawLODListWithAddButtonsScrolling(List<MochieData.LODMesh> meshList, ref Vector2 scroll, bool drawLabels, float minHeight, float maxHeight)
+        public static bool DrawLODListWithAddButtonsScrolling(List<GameObject> meshList, List<float> valueList, ref Vector2 scroll, bool drawLabels, float minHeight, float maxHeight)
         {
             bool changed = false;
             EditorGUILayout.BeginHorizontal();
@@ -33,8 +36,10 @@ namespace Pumkin.MochieTools
                         gc = new GUIContent($"LOD {i}");
                     try
                     {
-                        MochieData.LODMesh current = meshList[i];
-                        GameObject newMeshObject = null;
+                        GameObject currentMeshObj = meshList[i] ?? null;
+                        GameObject newMeshObj = null;
+
+                        float currentValue = i > 0 ? valueList[i-1] : 100;
                         float newValue = 0;
 
                         try
@@ -45,34 +50,26 @@ namespace Pumkin.MochieTools
                             EditorGUIUtility.labelWidth = elementLabelWidth;
                             
                             EditorGUI.BeginChangeCheck();
-                            newMeshObject = EditorGUILayout.ObjectField(gc, current?.MeshObject, typeof(GameObject), true, GUILayout.ExpandWidth(true)) as GameObject;
+                            newMeshObj = EditorGUILayout.ObjectField(gc, currentMeshObj, typeof(GameObject), true, GUILayout.ExpandWidth(true)) as GameObject;
                             if(EditorGUI.EndChangeCheck())
                             {
-                                bool isValidMesh = newMeshObject &&
-                                                   newMeshObject.GetComponent<MeshFilter>()?.sharedMesh ||
-                                                   newMeshObject.GetComponent<SkinnedMeshRenderer>()?.sharedMesh;
-
-                                if(!newMeshObject || isValidMesh)
+                                if(!newMeshObj || IsValidMeshObject(newMeshObj))
                                 {
-                                    if(meshList[i] == null)
-                                        meshList[i] = new MochieData.LODMesh(newMeshObject, 0);
-                                    
-                                    meshList[i].MeshObject = newMeshObject;
+                                    meshList[i] = newMeshObj;
                                     changed = true;
                                 }
                             }
 
                             EditorGUIUtility.labelWidth = elementLabelWidth;
                             
+                            EditorGUI.BeginDisabledGroup(i == 0);
                             EditorGUI.BeginChangeCheck();
-                            newValue = EditorGUILayout.FloatField(GUIContent.none, current?.Percent ?? 0, GUILayout.MaxWidth(valueFieldWidth));
+                            newValue = EditorGUILayout.FloatField(GUIContent.none, currentValue, GUILayout.MaxWidth(valueFieldWidth));
                             if(EditorGUI.EndChangeCheck())
                             {
-                                if(meshList[i] == null)
-                                    meshList[i] = new MochieData.LODMesh(newMeshObject, 0);
-                                else
-                                    meshList[i].Percent = newValue;
+                                valueList[i-1] = Mathf.Clamp(newValue, 0, 100);
                             }
+                            EditorGUI.EndDisabledGroup();
 
                             EditorGUILayout.EndHorizontal();
                             EditorGUIUtility.labelWidth = oldWidth;
@@ -88,22 +85,40 @@ namespace Pumkin.MochieTools
             
                 EditorGUILayout.EndScrollView();
 
-                DrawAddButtons(meshList);
+                DrawLODListAddButtons(meshList, valueList);
             }
             EditorGUILayout.EndHorizontal();
             return changed;
         }
 
-        static void DrawAddButtons<T>(List<T> list) where T : class
+        static bool IsValidMeshObject(GameObject meshObject)
+        {
+            return meshObject &&
+                   meshObject.GetComponent<MeshFilter>()?.sharedMesh ||
+                   meshObject.GetComponent<SkinnedMeshRenderer>()?.sharedMesh;
+        }
+
+        static void DrawLODListAddButtons(List<GameObject> objects, List<float> values)
         {
             EditorGUILayout.BeginVertical(GUILayout.MaxWidth(MochieData.Styles.IconButton.fixedWidth));
             {
                 if(GUILayout.Button(MochieData.Icons.Add, MochieData.Styles.IconButton))
-                    list.ResizeWithDefaults(list.Count + 1);
+                {
+                    objects.ResizeWithDefaults(objects.Count + 1);
+                    values.ResizeWithDefaults(values.Count + 1);
+                }
+
                 if(GUILayout.Button(MochieData.Icons.Remove, MochieData.Styles.IconButton))
-                    list.ResizeWithDefaults(list.Count - 1);
+                {
+                    objects.ResizeWithDefaults(objects.Count - 1);
+                    values.ResizeWithDefaults(values.Count - 1);
+                }
+
                 if(GUILayout.Button(MochieData.Icons.RemoveAll, MochieData.Styles.IconButton))
-                    list.Clear();
+                {
+                    objects.Clear();
+                    values.Clear();
+                }
             }
             EditorGUILayout.EndVertical();
         }
@@ -117,6 +132,29 @@ namespace Pumkin.MochieTools
             var inst = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(path).GetInstanceID();
             EditorGUIUtility.PingObject(inst);
         }
+
+        internal static List<GameObject> GetLODsFromSelection(out Material lodGroupMaterial)
+        {
+            List<GameObject> unsorted = new List<GameObject>();
+            lodGroupMaterial = null;
+            
+            foreach(var obj in Selection.objects)
+            {
+                if(obj is GameObject go)
+                {
+                    if(IsValidMeshObject(go))
+                        unsorted.Add(go);
+                }
+                else if(obj is Material mat)
+                {
+                    lodGroupMaterial = mat;
+                }
+            }
+
+            return unsorted
+                .OrderBy(go => Regex.Match(go.name, @"/(LOD\d)/gi"))
+                .ToList();
+        }
     }
 
     internal static class MochieExtensions
@@ -129,8 +167,11 @@ namespace Pumkin.MochieTools
         /// <param name="size">New size</param>
         public static void ResizeWithDefaults<T>(this List<T> list, int size)
         {
-            if(size == list.Count)
+            if(list is null)
+                list = new List<T>();
+            else if(size == list.Count)
                 return;
+            
             if(size <= 0)
             {
                 list.Clear();

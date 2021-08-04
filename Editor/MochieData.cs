@@ -10,8 +10,11 @@ namespace Pumkin.MochieTools
             public static GUIStyle EditorLine { get; private set; }
             public static GUIStyle RoundedBox { get; private set; }
             public static GUIStyle IconButton { get; private set; }
-            public static GUIStyle Icon { get; private set; }
-
+            public static GUIStyle MediumButton { get; private set; }
+            public static GUIStyle BigButton { get; private set; }
+            public static GUIStyle TitleLabel { get; private set; }
+            
+            
             static Styles()
             {
                 EditorLine = new GUIStyle("box")
@@ -39,17 +42,22 @@ namespace Pumkin.MochieTools
                     padding = new RectOffset(0, 0, 0, 0),
                 };
                 
-                Icon = new GUIStyle("label")
+                MediumButton = new GUIStyle("button")
                 {
-                    fixedWidth = 18f,
-                    fixedHeight = 18f,
-                    imagePosition = ImagePosition.ImageOnly,
-                    alignment = TextAnchor.LowerRight,
-                    padding = new RectOffset(0, 0, 0, 0),
-                    margin = new RectOffset(0, 0, 0, 0),
-                    border = new RectOffset(0, 0, 0, 0),
+                    fixedHeight = 20f,
+                    margin = new RectOffset(2,2,4,6)
                 };
 
+                BigButton = new GUIStyle("button")
+                {
+                    fixedHeight = 30f,
+                    margin = new RectOffset(2,2,4,6)
+                };
+                
+                TitleLabel = new GUIStyle(EditorStyles.label)
+                {
+                    fontSize = 15, stretchHeight = true, clipping = TextClipping.Overflow
+                };
             }
         }
 
@@ -77,18 +85,5 @@ namespace Pumkin.MochieTools
                     ? EditorGUIUtility.IconContent("vcs_delete")?.image : Default;
             }
         }
-        
-        public class LODMesh
-        {
-            public float Percent = 0;
-            public GameObject MeshObject = null;
-
-            public LODMesh(GameObject newMeshObject, float newValue)
-            {
-                Percent = newValue;
-                MeshObject = newMeshObject;
-            }
-        }
-
     }
 }
